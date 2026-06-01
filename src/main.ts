@@ -14,24 +14,24 @@ import { HttpExceptionFilter } from "./common/filters/http-exception.filter";
 import { LoggingInterceptor } from "./common/interceptors/logging.interceptor";
 import { TransformInterceptor } from "./common/interceptors/transform.interceptor";
 
-async function bootstrap() {
-  const logger = new Logger("Bootstrap");
+let cachedApp: any;
 
+async function bootstrap() {
+  if (cachedApp) return cachedApp;
+
+  const logger = new Logger("Bootstrap");
   const app = await NestFactory.create(AppModule, {
-    logger: ["error", "warn", "log", "debug", "verbose"],
+    logger: ["error", "warn", "log"],
   });
 
   const configService = app.get(ConfigService);
-  const port = configService.get<number>("PORT", 3000);
   const apiPrefix = configService.get<string>("API_PREFIX", "api/v1");
   const nodeEnv = configService.get<string>("NODE_ENV", "development");
 
-  // Security
   app.use(helmet.default());
   app.use(compression());
   app.use(cookieParser());
 
-  // CORS
   app.enableCors({
     origin: [
       configService.get<string>("FRONTEND_URL", "http://localhost:3001"),
@@ -43,22 +43,17 @@ async function bootstrap() {
     allowedHeaders: ["Content-Type", "Authorization", "x-workspace-id"],
   });
 
-  // Global prefix
   app.setGlobalPrefix(apiPrefix);
 
-  // Global validation pipe
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
-      transformOptions: {
-        enableImplicitConversion: true,
-      },
+      transformOptions: { enableImplicitConversion: true },
     }),
   );
 
-  // Global interceptors
   const reflector = app.get(Reflector);
   app.useGlobalInterceptors(
     new ClassSerializerInterceptor(reflector),
@@ -66,19 +61,12 @@ async function bootstrap() {
     new LoggingInterceptor(),
   );
 
-  // Global exception filter
   app.useGlobalFilters(new HttpExceptionFilter());
 
-  // Swagger docs (non-production or when explicitly enabled)
-  if (
-    nodeEnv !== "production" ||
-    configService.get("SWAGGER_ENABLED") === "true"
-  ) {
+  if (nodeEnv !== "production" || configService.get("SWAGGER_ENABLED") === "true") {
     const swaggerConfig = new DocumentBuilder()
       .setTitle("Invoiq API")
-      .setDescription(
-        "Production-grade multi-tenant SaaS billing platform for freelancers and agencies",
-      )
+      .setDescription("Production-grade multi-tenant SaaS billing platform")
       .setVersion("1.0.0")
       .addBearerAuth(
         { type: "http", scheme: "bearer", bearerFormat: "JWT", in: "header" },
@@ -88,35 +76,30 @@ async function bootstrap() {
         { type: "apiKey", in: "header", name: "x-workspace-id" },
         "workspace-id",
       )
-      .addTag("Auth", "Authentication & authorization")
-      .addTag("Workspaces", "Workspace management")
-      .addTag("Team", "Team member management")
-      .addTag("Clients", "Client management")
-      .addTag("Projects", "Project management")
-      .addTag("Invoices", "Invoice management & PDF generation")
-      .addTag("Plans", "Billing plan management")
-      .addTag("Subscriptions", "Recurring subscription management")
-      .addTag("Contracts", "Contract management")
-      .addTag("Transactions", "Payment transactions")
-      .addTag("Dashboard", "Analytics & dashboard")
-      .addTag("Notifications", "Push notifications")
       .build();
-
     const document = SwaggerModule.createDocument(app, swaggerConfig);
-    SwaggerModule.setup(`${apiPrefix}/docs`, app, document, {
-      swaggerOptions: {
-        persistAuthorization: true,
-        tagsSorter: "alpha",
-        operationsSorter: "alpha",
-      },
-    });
-
-    logger.log(`Swagger docs: http://localhost:${port}/${apiPrefix}/docs`);
+    SwaggerModule.setup(`${apiPrefix}/docs`, app, document);
   }
 
-  await app.listen(port);
-  logger.log(`Application running on port ${port} [${nodeEnv}]`);
-  logger.log(`API: http://localhost:${port}/${apiPrefix}`);
+  await app.init();
+  cachedApp = app;
+  logger.log("App initialized");
+  return cachedApp;
 }
 
-bootstrap();
+// Serverless handler for Vercel
+export default async function handler(req: any, res: any) {
+  const app = await bootstrap();
+  const server = app.getHttpAdapter().getInstance();
+  server(req, res);
+}
+
+// Local dev: listen on port
+if (process.env.NODE_ENV !== "production") {
+  bootstrap().then(async (app) => {
+    const configService = app.get(ConfigService);
+    const port = configService.get("PORT", 3000);
+    await app.listen(port);
+    console.log(`Running on http://localhost:${port}`);
+  });
+}
