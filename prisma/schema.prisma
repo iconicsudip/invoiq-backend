@@ -1,0 +1,625 @@
+// ============================================================
+// Invoiq — Prisma Schema
+// PostgreSQL · Full tenant isolation · Soft deletes · Audit fields
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserRole {
+  OWNER
+  ADMIN
+  ACCOUNTANT
+  STAFF
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+enum ProjectStatus {
+  ACTIVE
+  COMPLETED
+  ON_HOLD
+  CANCELLED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum SubscriptionInterval {
+  MONTHLY
+  QUARTERLY
+  HALF_YEARLY
+  YEARLY
+}
+
+enum SubscriptionStatus {
+  CREATED
+  AUTHENTICATED
+  ACTIVE
+  PAUSED
+  CANCELLED
+  COMPLETED
+  EXPIRED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+enum ContractStatus {
+  DRAFT
+  ACTIVE
+  EXPIRED
+  RENEWED
+  TERMINATED
+}
+
+enum NotificationType {
+  INVOICE_PAID
+  INVOICE_OVERDUE
+  INVOICE_SENT
+  PAYMENT_FAILED
+  SUBSCRIPTION_RENEWED
+  SUBSCRIPTION_CANCELLED
+  SUBSCRIPTION_PAUSED
+  CONTRACT_EXPIRING
+  CONTRACT_EXPIRED
+  TEAM_INVITATION
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  INVITE
+  REVOKE
+  PAYMENT_SUCCESS
+  PAYMENT_FAILURE
+}
+
+// ============================================================
+// USER & AUTH
+// ============================================================
+
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  phone             String?   @unique
+  passwordHash      String?   @map("password_hash")
+  firstName         String    @map("first_name")
+  lastName          String    @map("last_name")
+  avatarUrl         String?   @map("avatar_url")
+  isEmailVerified   Boolean   @default(false) @map("is_email_verified")
+  isPhoneVerified   Boolean   @default(false) @map("is_phone_verified")
+  isActive          Boolean   @default(true) @map("is_active")
+  fcmToken          String?   @map("fcm_token")
+  lastLoginAt       DateTime? @map("last_login_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+  deletedAt         DateTime? @map("deleted_at")
+
+  // Relations
+  refreshTokens     RefreshToken[]
+  otpCodes          OtpCode[]
+  workspaceMembers  WorkspaceMember[]
+  auditLogs         AuditLog[]
+  notifications     Notification[]
+  passwordResets    PasswordReset[]
+
+  @@index([email])
+  @@index([phone])
+  @@index([deletedAt])
+  @@map("users")
+}
+
+model RefreshToken {
+  id          String    @id @default(cuid())
+  token       String    @unique
+  userId      String    @map("user_id")
+  deviceInfo  String?   @map("device_info")
+  ipAddress   String?   @map("ip_address")
+  expiresAt   DateTime  @map("expires_at")
+  revokedAt   DateTime? @map("revoked_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model OtpCode {
+  id          String    @id @default(cuid())
+  userId      String?   @map("user_id")
+  phone       String?
+  email       String?
+  code        String
+  expiresAt   DateTime  @map("expires_at")
+  usedAt      DateTime? @map("used_at")
+  attempts    Int       @default(0)
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  user        User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([phone])
+  @@index([email])
+  @@index([expiresAt])
+  @@map("otp_codes")
+}
+
+model PasswordReset {
+  id          String    @id @default(cuid())
+  userId      String    @map("user_id")
+  token       String    @unique
+  expiresAt   DateTime  @map("expires_at")
+  usedAt      DateTime? @map("used_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+  @@map("password_resets")
+}
+
+// ============================================================
+// WORKSPACE (TENANT)
+// ============================================================
+
+model Workspace {
+  id                String    @id @default(cuid())
+  companyName       String    @map("company_name")
+  slug              String    @unique
+  logoUrl           String?   @map("logo_url")
+  gstin             String?
+  pan               String?
+  addressLine1      String?   @map("address_line1")
+  addressLine2      String?   @map("address_line2")
+  city              String?
+  state             String?
+  country           String    @default("India")
+  pincode           String?
+  email             String?
+  phone             String?
+  website           String?
+  bankName          String?   @map("bank_name")
+  accountNumber     String?   @map("account_number")
+  ifscCode          String?   @map("ifsc_code")
+  accountHolderName String?   @map("account_holder_name")
+  upiId             String?   @map("upi_id")
+  invoicePrefix     String    @default("INV") @map("invoice_prefix")
+  invoiceCounter    Int       @default(1) @map("invoice_counter")
+  currency          String    @default("INR")
+  timezone          String    @default("Asia/Kolkata")
+  isActive          Boolean   @default(true) @map("is_active")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+  deletedAt         DateTime? @map("deleted_at")
+
+  // Relations
+  members           WorkspaceMember[]
+  invitations       WorkspaceInvitation[]
+  clients           Client[]
+  projects          Project[]
+  invoices          Invoice[]
+  plans             Plan[]
+  subscriptions     Subscription[]
+  contracts         Contract[]
+  transactions      Transaction[]
+  auditLogs         AuditLog[]
+  notifications     Notification[]
+
+  @@index([slug])
+  @@index([deletedAt])
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String    @id @default(cuid())
+  workspaceId String    @map("workspace_id")
+  userId      String    @map("user_id")
+  role        UserRole  @default(STAFF)
+  isActive    Boolean   @default(true) @map("is_active")
+  joinedAt    DateTime  @default(now()) @map("joined_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([workspaceId])
+  @@index([userId])
+  @@map("workspace_members")
+}
+
+model WorkspaceInvitation {
+  id          String            @id @default(cuid())
+  workspaceId String            @map("workspace_id")
+  email       String
+  role        UserRole          @default(STAFF)
+  token       String            @unique
+  status      InvitationStatus  @default(PENDING)
+  invitedById String            @map("invited_by_id")
+  expiresAt   DateTime          @map("expires_at")
+  acceptedAt  DateTime?         @map("accepted_at")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  workspace   Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([email])
+  @@index([token])
+  @@map("workspace_invitations")
+}
+
+// ============================================================
+// CLIENT
+// ============================================================
+
+model Client {
+  id              String    @id @default(cuid())
+  workspaceId     String    @map("workspace_id")
+  companyName     String    @map("company_name")
+  contactPerson   String?   @map("contact_person")
+  email           String?
+  mobile          String?
+  gstin           String?
+  pan             String?
+  addressLine1    String?   @map("address_line1")
+  addressLine2    String?   @map("address_line2")
+  city            String?
+  state           String?
+  country         String    @default("India")
+  pincode         String?
+  notes           String?
+  isActive        Boolean   @default(true) @map("is_active")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+
+  // Relations
+  workspace       Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  projects        Project[]
+  invoices        Invoice[]
+  subscriptions   Subscription[]
+  contracts       Contract[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, email])
+  @@index([deletedAt])
+  @@map("clients")
+}
+
+// ============================================================
+// PROJECT
+// ============================================================
+
+model Project {
+  id            String        @id @default(cuid())
+  workspaceId   String        @map("workspace_id")
+  clientId      String        @map("client_id")
+  title         String
+  description   String?
+  budget        Decimal?      @db.Decimal(12, 2)
+  startDate     DateTime?     @map("start_date")
+  endDate       DateTime?     @map("end_date")
+  status        ProjectStatus @default(ACTIVE)
+  totalRevenue  Decimal       @default(0) @db.Decimal(12, 2) @map("total_revenue")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  deletedAt     DateTime?     @map("deleted_at")
+
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  client        Client        @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  invoices      Invoice[]
+
+  @@index([workspaceId])
+  @@index([clientId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("projects")
+}
+
+// ============================================================
+// INVOICE
+// ============================================================
+
+model Invoice {
+  id              String        @id @default(cuid())
+  workspaceId     String        @map("workspace_id")
+  clientId        String        @map("client_id")
+  projectId       String?       @map("project_id")
+  subscriptionId  String?       @map("subscription_id")
+  invoiceNumber   String        @map("invoice_number")
+  invoiceDate     DateTime      @map("invoice_date")
+  dueDate         DateTime      @map("due_date")
+  status          InvoiceStatus @default(DRAFT)
+  notes           String?
+  termsConditions String?       @map("terms_conditions")
+
+  // Amounts
+  subtotal        Decimal       @db.Decimal(12, 2)
+  discountAmount  Decimal       @default(0) @db.Decimal(12, 2) @map("discount_amount")
+  discountPercent Decimal       @default(0) @db.Decimal(5, 2) @map("discount_percent")
+  cgstAmount      Decimal       @default(0) @db.Decimal(12, 2) @map("cgst_amount")
+  sgstAmount      Decimal       @default(0) @db.Decimal(12, 2) @map("sgst_amount")
+  igstAmount      Decimal       @default(0) @db.Decimal(12, 2) @map("igst_amount")
+  totalGst        Decimal       @default(0) @db.Decimal(12, 2) @map("total_gst")
+  total           Decimal       @db.Decimal(12, 2)
+  amountPaid      Decimal       @default(0) @db.Decimal(12, 2) @map("amount_paid")
+  amountDue       Decimal       @db.Decimal(12, 2) @map("amount_due")
+
+  // Razorpay
+  razorpayOrderId   String?   @map("razorpay_order_id")
+  razorpayPaymentId String?   @map("razorpay_payment_id")
+  paymentLink       String?   @map("payment_link")
+
+  // Tracking
+  sentAt          DateTime?   @map("sent_at")
+  paidAt          DateTime?   @map("paid_at")
+  cancelledAt     DateTime?   @map("cancelled_at")
+  pdfUrl          String?     @map("pdf_url")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+  deletedAt       DateTime?   @map("deleted_at")
+
+  workspace       Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  client          Client      @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  project         Project?    @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  subscription    Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  items           InvoiceItem[]
+  transactions    Transaction[]
+
+  @@unique([workspaceId, invoiceNumber])
+  @@index([workspaceId])
+  @@index([clientId])
+  @@index([status])
+  @@index([dueDate])
+  @@index([deletedAt])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id          String    @id @default(cuid())
+  invoiceId   String    @map("invoice_id")
+  itemName    String    @map("item_name")
+  description String?
+  quantity    Decimal   @db.Decimal(10, 2)
+  unitPrice   Decimal   @db.Decimal(12, 2) @map("unit_price")
+  gstPercent  Decimal   @default(18) @db.Decimal(5, 2) @map("gst_percent")
+  amount      Decimal   @db.Decimal(12, 2)
+  sortOrder   Int       @default(0) @map("sort_order")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  invoice     Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@map("invoice_items")
+}
+
+// ============================================================
+// SUBSCRIPTION / RECURRING BILLING
+// ============================================================
+
+model Plan {
+  id            String               @id @default(cuid())
+  workspaceId   String               @map("workspace_id")
+  name          String
+  description   String?
+  amount        Decimal              @db.Decimal(12, 2)
+  interval      SubscriptionInterval
+  intervalCount Int                  @default(1) @map("interval_count")
+  currency      String               @default("INR")
+  isActive      Boolean              @default(true) @map("is_active")
+
+  // Razorpay
+  razorpayPlanId String?  @unique @map("razorpay_plan_id")
+
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
+
+  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  subscriptions Subscription[]
+
+  @@index([workspaceId])
+  @@index([deletedAt])
+  @@map("plans")
+}
+
+model Subscription {
+  id                  String             @id @default(cuid())
+  workspaceId         String             @map("workspace_id")
+  clientId            String             @map("client_id")
+  planId              String             @map("plan_id")
+  status              SubscriptionStatus @default(CREATED)
+  startDate           DateTime?          @map("start_date")
+  endDate             DateTime?          @map("end_date")
+  nextBillingDate     DateTime?          @map("next_billing_date")
+  cancelledAt         DateTime?          @map("cancelled_at")
+  notes               String?
+
+  // Razorpay
+  razorpayCustomerId      String?   @map("razorpay_customer_id")
+  razorpaySubscriptionId  String?   @unique @map("razorpay_subscription_id")
+  approvalLink            String?   @map("approval_link")
+
+  // Totals
+  totalBilled         Decimal   @default(0) @db.Decimal(12, 2) @map("total_billed")
+  totalPaid           Decimal   @default(0) @db.Decimal(12, 2) @map("total_paid")
+
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+  deletedAt           DateTime? @map("deleted_at")
+
+  workspace           Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  client              Client        @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  plan                Plan          @relation(fields: [planId], references: [id], onDelete: Restrict)
+  invoices            Invoice[]
+  transactions        Transaction[]
+
+  @@index([workspaceId])
+  @@index([clientId])
+  @@index([status])
+  @@index([nextBillingDate])
+  @@index([deletedAt])
+  @@map("subscriptions")
+}
+
+// ============================================================
+// TRANSACTION (payment record)
+// ============================================================
+
+model Transaction {
+  id                  String        @id @default(cuid())
+  workspaceId         String        @map("workspace_id")
+  invoiceId           String?       @map("invoice_id")
+  subscriptionId      String?       @map("subscription_id")
+  amount              Decimal       @db.Decimal(12, 2)
+  currency            String        @default("INR")
+  status              PaymentStatus @default(PENDING)
+  method              String?       // card, upi, netbanking, etc.
+  notes               String?
+
+  // Razorpay
+  razorpayPaymentId   String?   @unique @map("razorpay_payment_id")
+  razorpayOrderId     String?   @map("razorpay_order_id")
+  razorpaySignature   String?   @map("razorpay_signature")
+  webhookPayload      Json?     @map("webhook_payload")
+
+  paidAt              DateTime? @map("paid_at")
+  failedAt            DateTime? @map("failed_at")
+  failureReason       String?   @map("failure_reason")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  workspace           Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invoice             Invoice?      @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  subscription        Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([invoiceId])
+  @@index([subscriptionId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("transactions")
+}
+
+// ============================================================
+// CONTRACT
+// ============================================================
+
+model Contract {
+  id            String          @id @default(cuid())
+  workspaceId   String          @map("workspace_id")
+  clientId      String          @map("client_id")
+  title         String
+  description   String?
+  status        ContractStatus  @default(DRAFT)
+  startDate     DateTime?       @map("start_date")
+  endDate       DateTime?       @map("end_date")
+  renewalDate   DateTime?       @map("renewal_date")
+  fileUrl       String?         @map("file_url")
+  fileKey       String?         @map("file_key") // S3 key
+  value         Decimal?        @db.Decimal(12, 2)
+  reminderDays  Int             @default(30) @map("reminder_days")
+  autoRenew     Boolean         @default(false) @map("auto_renew")
+  notes         String?
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+  deletedAt     DateTime?       @map("deleted_at")
+
+  workspace     Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  client        Client          @relation(fields: [clientId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId])
+  @@index([clientId])
+  @@index([status])
+  @@index([endDate])
+  @@index([renewalDate])
+  @@index([deletedAt])
+  @@map("contracts")
+}
+
+// ============================================================
+// NOTIFICATION
+// ============================================================
+
+model Notification {
+  id          String            @id @default(cuid())
+  workspaceId String            @map("workspace_id")
+  userId      String            @map("user_id")
+  type        NotificationType
+  title       String
+  body        String
+  data        Json?
+  isRead      Boolean           @default(false) @map("is_read")
+  readAt      DateTime?         @map("read_at")
+  sentAt      DateTime?         @map("sent_at")
+  createdAt   DateTime          @default(now()) @map("created_at")
+
+  workspace   Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, userId])
+  @@index([userId, isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+// ============================================================
+// AUDIT LOG
+// ============================================================
+
+model AuditLog {
+  id          String      @id @default(cuid())
+  workspaceId String?     @map("workspace_id")
+  userId      String      @map("user_id")
+  action      AuditAction
+  entity      String      // e.g. "Invoice", "Client"
+  entityId    String?     @map("entity_id")
+  oldValues   Json?       @map("old_values")
+  newValues   Json?       @map("new_values")
+  ipAddress   String?     @map("ip_address")
+  userAgent   String?     @map("user_agent")
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  workspace   Workspace?  @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([userId])
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
