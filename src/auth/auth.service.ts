@@ -1,28 +1,27 @@
 import {
-  Injectable,
-  UnauthorizedException,
   BadRequestException,
   ConflictException,
-  NotFoundException,
+  Injectable,
   Logger,
-} from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../prisma/prisma.service';
-import * as bcrypt from 'bcrypt';
-import { randomBytes } from 'crypto';
-import { v4 as uuidv4 } from 'uuid';
-import * as dayjs from 'dayjs';
+  NotFoundException,
+  UnauthorizedException,
+} from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { JwtService } from "@nestjs/jwt";
+import * as bcrypt from "bcrypt";
+import { randomBytes } from "crypto";
+import dayjs from "dayjs";
+import { PrismaService } from "../prisma/prisma.service";
 import {
-  RegisterDto,
+  ChangePasswordDto,
+  ForgotPasswordDto,
   LoginDto,
   OtpRequestDto,
   OtpVerifyDto,
   RefreshTokenDto,
-  ForgotPasswordDto,
+  RegisterDto,
   ResetPasswordDto,
-  ChangePasswordDto,
-} from './dto';
+} from "./dto";
 
 @Injectable()
 export class AuthService {
@@ -42,12 +41,12 @@ export class AuthService {
     });
 
     if (existing) {
-      throw new ConflictException('An account with this email already exists');
+      throw new ConflictException("An account with this email already exists");
     }
 
     const passwordHash = await bcrypt.hash(
       dto.password,
-      this.config.get<number>('bcrypt.rounds', 12),
+      this.config.get<number>("bcrypt.rounds", 12),
     );
 
     const user = await this.prisma.user.create({
@@ -64,8 +63,8 @@ export class AuthService {
     await this.prisma.auditLog.create({
       data: {
         userId: user.id,
-        action: 'CREATE',
-        entity: 'User',
+        action: "CREATE",
+        entity: "User",
         entityId: user.id,
         ipAddress,
       },
@@ -88,16 +87,16 @@ export class AuthService {
     });
 
     if (!user || !user.passwordHash) {
-      throw new UnauthorizedException('Invalid email or password');
+      throw new UnauthorizedException("Invalid email or password");
     }
 
     if (!user.isActive) {
-      throw new UnauthorizedException('Account is disabled');
+      throw new UnauthorizedException("Account is disabled");
     }
 
     const isValid = await bcrypt.compare(dto.password, user.passwordHash);
     if (!isValid) {
-      throw new UnauthorizedException('Invalid email or password');
+      throw new UnauthorizedException("Invalid email or password");
     }
 
     await this.prisma.user.update({
@@ -108,8 +107,8 @@ export class AuthService {
     await this.prisma.auditLog.create({
       data: {
         userId: user.id,
-        action: 'LOGIN',
-        entity: 'User',
+        action: "LOGIN",
+        entity: "User",
         entityId: user.id,
         ipAddress,
         userAgent,
@@ -117,7 +116,12 @@ export class AuthService {
     });
 
     const tokens = await this.generateTokens(user.id, user.email);
-    await this.saveRefreshToken(user.id, tokens.refreshToken, ipAddress, userAgent);
+    await this.saveRefreshToken(
+      user.id,
+      tokens.refreshToken,
+      ipAddress,
+      userAgent,
+    );
 
     return {
       user: this.sanitizeUser(user),
@@ -128,7 +132,7 @@ export class AuthService {
   // ─── OTP ─────────────────────────────────────────────────────────
 
   async requestOtp(dto: OtpRequestDto) {
-    const expiry = this.config.get<number>('otp.expiryMinutes', 10);
+    const expiry = this.config.get<number>("otp.expiryMinutes", 10);
     const code = Math.floor(100000 + Math.random() * 900000).toString();
 
     // Find or create user by phone
@@ -148,7 +152,7 @@ export class AuthService {
         userId: user?.id,
         phone: dto.phone,
         code: await bcrypt.hash(code, 10),
-        expiresAt: dayjs().add(expiry, 'minute').toDate(),
+        expiresAt: dayjs().add(expiry, "minute").toDate(),
       },
     });
 
@@ -160,7 +164,7 @@ export class AuthService {
   }
 
   async verifyOtp(dto: OtpVerifyDto, ipAddress?: string) {
-    const maxAttempts = this.config.get<number>('otp.maxAttempts', 5);
+    const maxAttempts = this.config.get<number>("otp.maxAttempts", 5);
 
     const otpRecord = await this.prisma.otpCode.findFirst({
       where: {
@@ -168,15 +172,19 @@ export class AuthService {
         usedAt: null,
         expiresAt: { gt: new Date() },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
     });
 
     if (!otpRecord) {
-      throw new BadRequestException('OTP expired or not found. Please request a new one.');
+      throw new BadRequestException(
+        "OTP expired or not found. Please request a new one.",
+      );
     }
 
     if (otpRecord.attempts >= maxAttempts) {
-      throw new BadRequestException('Too many failed attempts. Please request a new OTP.');
+      throw new BadRequestException(
+        "Too many failed attempts. Please request a new OTP.",
+      );
     }
 
     const isValid = await bcrypt.compare(dto.code, otpRecord.code);
@@ -186,7 +194,7 @@ export class AuthService {
         where: { id: otpRecord.id },
         data: { attempts: { increment: 1 } },
       });
-      throw new UnauthorizedException('Invalid OTP');
+      throw new UnauthorizedException("Invalid OTP");
     }
 
     // Mark OTP as used
@@ -203,9 +211,9 @@ export class AuthService {
     if (!user) {
       user = await this.prisma.user.create({
         data: {
-          email: dto.email || `${dto.phone.replace('+', '')}@otp.temp`,
-          firstName: dto.firstName || 'User',
-          lastName: dto.lastName || '',
+          email: dto.email || `${dto.phone.replace("+", "")}@otp.temp`,
+          firstName: dto.firstName || "User",
+          lastName: dto.lastName || "",
           phone: dto.phone,
           isPhoneVerified: true,
         },
@@ -229,18 +237,22 @@ export class AuthService {
     let payload: any;
     try {
       payload = await this.jwtService.verifyAsync(dto.refreshToken, {
-        secret: this.config.get('jwt.refreshSecret'),
+        secret: this.config.get("jwt.refreshSecret"),
       });
     } catch {
-      throw new UnauthorizedException('Invalid or expired refresh token');
+      throw new UnauthorizedException("Invalid or expired refresh token");
     }
 
     const tokenRecord = await this.prisma.refreshToken.findUnique({
       where: { token: dto.refreshToken },
     });
 
-    if (!tokenRecord || tokenRecord.revokedAt || tokenRecord.expiresAt < new Date()) {
-      throw new UnauthorizedException('Refresh token revoked or expired');
+    if (
+      !tokenRecord ||
+      tokenRecord.revokedAt ||
+      tokenRecord.expiresAt < new Date()
+    ) {
+      throw new UnauthorizedException("Refresh token revoked or expired");
     }
 
     const user = await this.prisma.user.findUnique({
@@ -248,7 +260,7 @@ export class AuthService {
     });
 
     if (!user || !user.isActive) {
-      throw new UnauthorizedException('User not found or disabled');
+      throw new UnauthorizedException("User not found or disabled");
     }
 
     // Rotate refresh token
@@ -274,10 +286,10 @@ export class AuthService {
     }
 
     await this.prisma.auditLog.create({
-      data: { userId, action: 'LOGOUT', entity: 'User', entityId: userId },
+      data: { userId, action: "LOGOUT", entity: "User", entityId: userId },
     });
 
-    return { message: 'Logged out successfully' };
+    return { message: "Logged out successfully" };
   }
 
   async logoutAllDevices(userId: string) {
@@ -286,7 +298,7 @@ export class AuthService {
       data: { revokedAt: new Date() },
     });
 
-    return { message: 'Logged out from all devices' };
+    return { message: "Logged out from all devices" };
   }
 
   // ─── Password Reset ──────────────────────────────────────────────
@@ -297,15 +309,16 @@ export class AuthService {
     });
 
     // Always return success to prevent email enumeration
-    if (!user) return { message: 'If that email exists, a reset link has been sent.' };
+    if (!user)
+      return { message: "If that email exists, a reset link has been sent." };
 
-    const token = randomBytes(32).toString('hex');
+    const token = randomBytes(32).toString("hex");
 
     await this.prisma.passwordReset.create({
       data: {
         userId: user.id,
         token,
-        expiresAt: dayjs().add(1, 'hour').toDate(),
+        expiresAt: dayjs().add(1, "hour").toDate(),
       },
     });
 
@@ -313,7 +326,7 @@ export class AuthService {
     // await this.emailService.sendPasswordReset(user.email, token);
     this.logger.log(`Password reset token for ${user.email}: ${token}`);
 
-    return { message: 'If that email exists, a reset link has been sent.' };
+    return { message: "If that email exists, a reset link has been sent." };
   }
 
   async resetPassword(dto: ResetPasswordDto) {
@@ -323,12 +336,12 @@ export class AuthService {
     });
 
     if (!record || record.usedAt || record.expiresAt < new Date()) {
-      throw new BadRequestException('Invalid or expired reset token');
+      throw new BadRequestException("Invalid or expired reset token");
     }
 
     const passwordHash = await bcrypt.hash(
       dto.newPassword,
-      this.config.get<number>('bcrypt.rounds', 12),
+      this.config.get<number>("bcrypt.rounds", 12),
     );
 
     await this.prisma.$transaction([
@@ -346,24 +359,27 @@ export class AuthService {
       }),
     ]);
 
-    return { message: 'Password reset successful. Please log in.' };
+    return { message: "Password reset successful. Please log in." };
   }
 
   async changePassword(userId: string, dto: ChangePasswordDto) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
 
     if (!user?.passwordHash) {
-      throw new BadRequestException('No password set on this account');
+      throw new BadRequestException("No password set on this account");
     }
 
-    const isValid = await bcrypt.compare(dto.currentPassword, user.passwordHash);
+    const isValid = await bcrypt.compare(
+      dto.currentPassword,
+      user.passwordHash,
+    );
     if (!isValid) {
-      throw new UnauthorizedException('Current password is incorrect');
+      throw new UnauthorizedException("Current password is incorrect");
     }
 
     const passwordHash = await bcrypt.hash(
       dto.newPassword,
-      this.config.get<number>('bcrypt.rounds', 12),
+      this.config.get<number>("bcrypt.rounds", 12),
     );
 
     await this.prisma.user.update({
@@ -376,7 +392,7 @@ export class AuthService {
       data: { revokedAt: new Date() },
     });
 
-    return { message: 'Password changed successfully. Please log in again.' };
+    return { message: "Password changed successfully. Please log in again." };
   }
 
   // ─── Profile ─────────────────────────────────────────────────────
@@ -401,7 +417,7 @@ export class AuthService {
       },
     });
 
-    if (!user) throw new NotFoundException('User not found');
+    if (!user) throw new NotFoundException("User not found");
 
     return this.sanitizeUser(user);
   }
@@ -411,7 +427,7 @@ export class AuthService {
       where: { id: userId },
       data: { fcmToken },
     });
-    return { message: 'FCM token updated' };
+    return { message: "FCM token updated" };
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────
@@ -421,12 +437,12 @@ export class AuthService {
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
-        secret: this.config.get<string>('jwt.secret'),
-        expiresIn: this.config.get<string>('jwt.expiresIn', '15m'),
+        secret: this.config.get<string>("jwt.secret"),
+        expiresIn: this.config.get<string>("jwt.expiresIn", "15m"),
       }),
       this.jwtService.signAsync(payload, {
-        secret: this.config.get<string>('jwt.refreshSecret'),
-        expiresIn: this.config.get<string>('jwt.refreshExpiresIn', '30d'),
+        secret: this.config.get<string>("jwt.refreshSecret"),
+        expiresIn: this.config.get<string>("jwt.refreshExpiresIn", "30d"),
       }),
     ]);
 
@@ -439,9 +455,7 @@ export class AuthService {
     ipAddress?: string,
     userAgent?: string,
   ) {
-    const expiresAt = dayjs()
-      .add(30, 'day')
-      .toDate();
+    const expiresAt = dayjs().add(30, "day").toDate();
 
     await this.prisma.refreshToken.create({
       data: { userId, token, ipAddress, deviceInfo: userAgent, expiresAt },
