@@ -422,6 +422,18 @@ export class AuthService {
     return this.sanitizeUser(user);
   }
 
+  async updateProfile(userId: string, dto: any) {
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        firstName: dto.firstName,
+        lastName: dto.lastName,
+        phone: dto.phone,
+      },
+    });
+    return this.sanitizeUser(user);
+  }
+
   async updateFcmToken(userId: string, fcmToken: string) {
     await this.prisma.user.update({
       where: { id: userId },

@@ -28,10 +28,28 @@ export class WorkspaceService {
   async findAllForUser(userId: string) {
     const members = await this.prisma.workspaceMember.findMany({
       where: { userId, isActive: true },
-      include: { workspace: true },
+      include: {
+        workspace: {
+          include: {
+            invoices: {
+              where: {
+                status: { in: ['SENT', 'OVERDUE'] },
+                deletedAt: null,
+              },
+              select: {
+                id: true,
+              },
+            },
+          },
+        },
+      },
       orderBy: { joinedAt: 'asc' },
     });
-    return members.map((m) => ({ ...m.workspace, role: m.role }));
+    return members.map((m) => {
+      const pendingInvoicesCount = m.workspace.invoices.length;
+      const { invoices, ...wsData } = m.workspace as any;
+      return { ...wsData, role: m.role, pendingInvoicesCount };
+    });
   }
 
   async findOne(id: string, userId: string) {

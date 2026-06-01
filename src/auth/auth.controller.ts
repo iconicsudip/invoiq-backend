@@ -120,6 +120,13 @@ export class AuthController {
     return this.authService.changePassword(userId, dto);
   }
 
+  @Patch('profile')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Update profile information' })
+  updateProfile(@CurrentUser('id') userId: string, @Body() dto: any) {
+    return this.authService.updateProfile(userId, dto);
+  }
+
   @Get('me')
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Get current user profile' })
